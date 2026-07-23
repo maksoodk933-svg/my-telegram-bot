@@ -145,7 +145,8 @@ def callback_listener(call):
         bot.edit_message_text("🤖 Choose a panel below to browse and buy:", chat_id, call.message.message_id, reply_markup=get_main_panel_inline())
         
     elif call.data.startswith("buy_"):
-        _, p_key, d_code = call.data.split("_")
+        data = call.data.replace("buy_", "")
+        p_key, d_code = data.rsplit("_", 1)
         price = PRODUCTS[p_key]["prices"][d_code]
         p_name = PRODUCTS[p_key]["name"]
         
@@ -162,7 +163,8 @@ def callback_listener(call):
         bot.send_photo(chat_id, qr_url, caption=payment_text, parse_mode="Markdown", reply_markup=markup)
 
     elif call.data.startswith("paid_"):
-        _, p_key, d_code = call.data.split("_")
+        data = call.data.replace("paid_", "")
+        p_key, d_code = data.rsplit("_", 1)
         admin_states[chat_id] = f"WAITING_PROOF_{p_key}_{d_code}"
         bot.send_message(chat_id, "📸 Send your **12-digit UTR / Transaction ID** or **Screenshot** here:")
 
@@ -175,7 +177,8 @@ def callback_listener(call):
         bot.send_message(call.from_user.id, "Select Panel & Plan to Add Key:", reply_markup=markup)
 
     elif call.data.startswith("addstock_"):
-        _, p_key, d_code = call.data.split("_")
+        data = call.data.replace("addstock_", "")
+        p_key, d_code = data.rsplit("_", 1)
         admin_states[call.from_user.id] = f"ADDING_KEY_{p_key}_{d_code}"
         bot.send_message(call.from_user.id, f"📝 Send the key now for **{PRODUCTS[p_key]['name']} ({d_code})**:", parse_mode="Markdown")
 
@@ -190,10 +193,8 @@ def callback_listener(call):
         bot.send_message(call.from_user.id, msg, parse_mode="Markdown")
 
     elif call.data.startswith("approve_"):
-        parts = call.data.split("_")
-        order_id = parts[1]
-        p_key = parts[2]
-        d_code = parts[3]
+        data = call.data.replace("approve_", "")
+        order_id, p_key, d_code = data.rsplit("_", 2)
         
         target_stock = f"{p_key}_{d_code}"
         
@@ -220,7 +221,8 @@ def handle_text_inputs(message):
 
     # Admin Adding Key
     if user_state.startswith("ADDING_KEY_"):
-        _, _, p_key, d_code = user_state.split("_")
+        data = user_state.replace("ADDING_KEY_", "")
+        p_key, d_code = data.rsplit("_", 1)
         target_stock = f"{p_key}_{d_code}"
         key = message.text.strip()
         
@@ -231,7 +233,8 @@ def handle_text_inputs(message):
 
     # User Sending Proof
     if user_state.startswith("WAITING_PROOF_"):
-        _, _, p_key, d_code = user_state.split("_")
+        data = user_state.replace("WAITING_PROOF_", "")
+        p_key, d_code = data.rsplit("_", 1)
         
         random_id = "".join(random.choices(string.digits, k=12))
         random_suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=4))
@@ -255,7 +258,7 @@ def handle_text_inputs(message):
         else:
             bot.send_message(target_admin, f"{admin_msg}\nProof/UTR: {message.text}", parse_mode="Markdown", reply_markup=markup)
 
-# --- BOT RUNNER & SELF PING (CRASH-PROOF & ALWAYS ON) ---
+# --- BOT RUNNER & SELF PING ---
 def run_bot():
     while True:
         try:
@@ -270,7 +273,7 @@ def run_bot():
 def keep_alive():
     url = "https://my-telegram-bot-kamx.onrender.com/"
     while True:
-        time.sleep(600)  # Har 10 minute mein Render server ko ping karega
+        time.sleep(600)
         try:
             requests.get(url)
             print("Auto-ping sent to keep server awake!")
@@ -278,16 +281,14 @@ def keep_alive():
             print(f"Ping failed: {e}")
 
 if __name__ == "__main__":
-    # Start Keep Alive Thread (Auto-Sleep Protection)
     ping_thread = threading.Thread(target=keep_alive)
     ping_thread.daemon = True
     ping_thread.start()
 
-    # Start Bot Thread (Crash Protection)
     bot_thread = threading.Thread(target=run_bot)
     bot_thread.daemon = True
     bot_thread.start()
 
-    # Start Web Server
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
+    
