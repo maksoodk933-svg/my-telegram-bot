@@ -7,15 +7,35 @@ import telebot
 from telebot import types
 
 TOKEN = os.environ.get('BOT_TOKEN')
-# Yahan aapki Admin Telegram User ID
 ADMIN_ID = int(os.environ.get('ADMIN_ID', 7172828025)) 
 ADMIN_USERNAME = "@HassanXMods1"
 
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-# Data Storage (In-Memory)
-stock_keys = {"main_id_1d": []}
+# --- PRODUCTS & PRICING CONFIG ---
+PRODUCTS = {
+    "main_id": {
+        "name": "🛡 MAIN ID PANEL",
+        "prices": {"1d": 100, "3d": 250, "7d": 450, "15d": 800, "30d": 1200}
+    },
+    "prime": {
+        "name": "💧 PRIME HOOK",
+        "prices": {"1d": 60, "3d": 140, "7d": 250, "15d": 400, "30d": 600}
+    },
+    "drip": {
+        "name": "🔺 DRIP CLIENT",
+        "prices": {"1d": 60, "3d": 140, "7d": 250, "15d": 400, "30d": 600}
+    }
+}
+
+# Key Storage
+stock_keys = {
+    f"{panel}_{days}": [] 
+    for panel in PRODUCTS.keys() 
+    for days in ["1d", "3d", "7d", "15d", "30d"]
+}
+
 pending_orders = {}
 user_orders = {}
 admin_states = {}
@@ -31,43 +51,51 @@ def get_admin_panel():
     markup.add(
         types.InlineKeyboardButton("➕ Add Key", callback_data="admin_add_key"),
         types.InlineKeyboardButton("📊 View Stock", callback_data="admin_view_stock"),
-        types.InlineKeyboardButton("💰 Manage Prices", callback_data="admin_prices"),
         types.InlineKeyboardButton("📢 Broadcast Message", callback_data="admin_broadcast"),
-        types.InlineKeyboardButton("⚡ Wake Bot", callback_data="admin_wake"),
-        types.InlineKeyboardButton("🔄 Force Restart", callback_data="admin_restart"),
-        types.InlineKeyboardButton("📊 Server Status", callback_data="admin_status"),
-        types.InlineKeyboardButton("⚠️ View Last Error", callback_data="admin_error")
+        types.InlineKeyboardButton("📊 Server Status", callback_data="admin_status")
     )
     return markup
 
 def get_main_panel_inline():
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
-        types.InlineKeyboardButton("🎁 MAIN ID PANEL", callback_data="panel_main"),
-        types.InlineKeyboardButton("💧 PRIME HOOK", callback_data="panel_prime"),
-        types.InlineKeyboardButton("💧 DRIP CLIENT", callback_data="panel_drip"),
+        types.InlineKeyboardButton("🎁 MAIN ID PANEL", callback_data="select_main_id"),
+        types.InlineKeyboardButton("💧 PRIME HOOK", callback_data="select_prime"),
+        types.InlineKeyboardButton("🔺 DRIP CLIENT", callback_data="select_drip"),
         types.InlineKeyboardButton("📖 How to Buy", callback_data="how_to_buy")
     )
     return markup
 
-def get_category_inline():
+def get_category_inline(panel_key):
     markup = types.InlineKeyboardMarkup(row_width=1)
-    markup.add(
-        types.InlineKeyboardButton("1 Day - ₹100", callback_data="cat_1day"),
-        types.InlineKeyboardButton("3 Days - ❌ Sold Out", callback_data="sold_out"),
-        types.InlineKeyboardButton("7 Days - ❌ Sold Out", callback_data="sold_out"),
-        types.InlineKeyboardButton("Go Back", callback_data="go_main")
-    )
+    panel_info = PRODUCTS[panel_key]
+    
+    days_map = {"1d": "1 Day", "3d": "3 Days", "7d": "7 Days", "15d": "15 Days", "30d": "30 Days"}
+    
+    for day_code, label in days_map.items():
+        price = panel_info["prices"][day_code]
+        stock_count = len(stock_keys.get(f"{panel_key}_{day_code}", []))
+        
+        if stock_count > 0:
+            btn_text = f"{label} - ₹{price}"
+            c_data = f"buy_{panel_key}_{day_code}"
+        else:
+            btn_text = f"{label} - ❌ Sold Out"
+            c_data = "sold_out"
+            
+        markup.add(types.InlineKeyboardButton(btn_text, callback_data=c_data))
+        
+    markup.add(types.InlineKeyboardButton("🔙 Go Back", callback_data="go_main"))
     return markup
 
-# --- COMMANDS & ROUTES ---
+# --- ROUTES & COMMANDS ---
 @app.route('/')
 def home():
     return "Bot Server is Alive!"
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    text = f"🎉 Welcome to 👑 — Hassan X Mod Store — 👑, {message.from_user.first_name}!\n\nWe sell premium mod keys for top mobile games.\n\n🤖 Choose a panel below to browse and buy:"
+    text = f"🎉 Welcome to 👑 — Hassan X Mod Store — 👑, {message.from_user.first_name}!\n\nWe sell premium keys for top mobile games.\n\n🤖 Choose a panel below to browse and buy:"
     bot.send_message(message.chat.id, text, reply_markup=get_user_reply_keyboard())
     bot.send_message(message.chat.id, "Select Panel:", reply_markup=get_main_panel_inline())
 
@@ -75,8 +103,6 @@ def send_welcome(message):
 def admin_command(message):
     if message.from_user.id == ADMIN_ID or message.from_user.username == "HassanXMods1":
         bot.send_message(message.chat.id, "🛠️ **Admin Control Panel**", parse_mode="Markdown", reply_markup=get_admin_panel())
-    else:
-        bot.send_message(message.chat.id, "❌ Aap admin nahi hain.")
 
 # --- USER BUTTONS ---
 @bot.message_handler(func=lambda msg: msg.text == "🏠 Main Menu")
@@ -101,91 +127,125 @@ def my_purchases(message):
 def support_info(message):
     bot.send_message(message.chat.id, f"📞 Contact us at {ADMIN_USERNAME} for any issues.")
 
-# --- INLINE CALLBACKS ---
+# --- CALLBACKS ---
 @bot.callback_query_handler(func=lambda call: True)
 def callback_listener(call):
     chat_id = call.message.chat.id
     
-    if call.data == "panel_main":
-        bot.edit_message_text("🛒 Select a category:", chat_id, call.message.message_id, reply_markup=get_category_inline())
+    if call.data.startswith("select_"):
+        panel_key = call.data.replace("select_", "")
+        bot.edit_message_text(f"🛒 Select Category for {PRODUCTS[panel_key]['name']}:", chat_id, call.message.message_id, reply_markup=get_category_inline(panel_key))
+        
     elif call.data == "sold_out":
-        bot.answer_callback_query(call.id, "This item is Sold Out!", show_alert=True)
+        bot.answer_callback_query(call.id, "This category is currently Sold Out!", show_alert=True)
+        
     elif call.data == "go_main":
         bot.edit_message_text("🤖 Choose a panel below to browse and buy:", chat_id, call.message.message_id, reply_markup=get_main_panel_inline())
-    elif call.data == "cat_1day":
+        
+    elif call.data.startswith("buy_"):
+        _, p_key, d_code = call.data.split("_")
+        price = PRODUCTS[p_key]["prices"][d_code]
+        p_name = PRODUCTS[p_key]["name"]
+        
         payment_text = (
-            "👑 💳 — **Hassan X Mod Store** — 👑\n\n"
-            "Panel: 🎁 MAIN ID PANEL\nCategory: 1 Day\nPrice: ₹100\n\n"
-            "💳 **UPI ID**: `8171733966@fam`\nName: Harsaan Ali Khan\n\n"
-            "Please pay exact amount and send UTR / Payment Screenshot here."
+            f"👑 💳 — **Hassan X Mod Store** — 👑\n\n"
+            f"Panel: {p_name}\nCategory: {d_code.upper()}\nPrice: ₹{price}\n\n"
+            f"💳 **UPI ID**: `8171733966@fam`\nName: Harsaan Ali Khan\n\n"
+            f"Please pay exact amount and send UTR / Screenshot here."
         )
-        qr_url = "https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=upi://pay?pa=8171733966@fam&pn=Harsaan%20Ali%20Khan&am=100"
+        qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=upi://pay?pa=8171733966@fam&pn=Harsaan%20Ali%20Khan&am={price}"
+        
         markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("✅ I Have Paid", callback_data="paid"))
+        markup.add(types.InlineKeyboardButton("✅ I Have Paid", callback_data=f"paid_{p_key}_{d_code}"))
         bot.send_photo(chat_id, qr_url, caption=payment_text, parse_mode="Markdown", reply_markup=markup)
 
-    elif call.data == "paid":
-        admin_states[chat_id] = "WAITING_PROOF"
+    elif call.data.startswith("paid_"):
+        _, p_key, d_code = call.data.split("_")
+        admin_states[chat_id] = f"WAITING_PROOF_{p_key}_{d_code}"
         bot.send_message(chat_id, "📸 Send your **12-digit UTR / Transaction ID** or **Screenshot** here:")
 
     # --- ADMIN CALLBACKS ---
     elif call.data == "admin_add_key" and (call.from_user.id == ADMIN_ID or call.from_user.username == "HassanXMods1"):
-        admin_states[call.from_user.id] = "ADD_KEY"
-        bot.send_message(call.from_user.id, "📝 **1 Day**\n\nSend the key/activation code now (one message = one key):", parse_mode="Markdown")
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for p_key, p_val in PRODUCTS.items():
+            for d_code in ["1d", "3d", "7d", "15d", "30d"]:
+                markup.add(types.InlineKeyboardButton(f"{p_val['name']} ({d_code})", callback_data=f"addstock_{p_key}_{d_code}"))
+        bot.send_message(call.from_user.id, "Select Panel & Plan to Add Key:", reply_markup=markup)
+
+    elif call.data.startswith("addstock_"):
+        _, p_key, d_code = call.data.split("_")
+        admin_states[call.from_user.id] = f"ADDING_KEY_{p_key}_{d_code}"
+        bot.send_message(call.from_user.id, f"📝 Send the key now for **{PRODUCTS[p_key]['name']} ({d_code})**:", parse_mode="Markdown")
 
     elif call.data == "admin_view_stock" and (call.from_user.id == ADMIN_ID or call.from_user.username == "HassanXMods1"):
-        count = len(stock_keys.get("main_id_1d", []))
-        bot.send_message(call.from_user.id, f"📊 **Current Stock:**\n\n🎁 main_id_1d: `{count}` Keys available.", parse_mode="Markdown")
+        msg = "📊 **Current Stock:**\n\n"
+        for p_key, p_val in PRODUCTS.items():
+            msg += f"**{p_val['name']}**:\n"
+            for d_code in ["1d", "3d", "7d", "15d", "30d"]:
+                cnt = len(stock_keys.get(f"{p_key}_{d_code}", []))
+                msg += f" • {d_code}: `{cnt}` Keys\n"
+            msg += "\n"
+        bot.send_message(call.from_user.id, msg, parse_mode="Markdown")
 
     elif call.data.startswith("approve_"):
-        order_id = call.data.split("_")[1]
+        parts = call.data.split("_")
+        order_id = parts[1]
+        p_key = parts[2]
+        d_code = parts[3]
+        
+        target_stock = f"{p_key}_{d_code}"
+        
         if order_id in pending_orders:
             u_id = pending_orders[order_id]
-            if stock_keys["main_id_1d"]:
-                key = stock_keys["main_id_1d"].pop(0)
-                bot.send_message(u_id, f"🎉 **Payment Approved!**\n\nHere is your key for **MAIN ID PANEL (1 Day)**:\n\n`{key}`", parse_mode="Markdown")
+            if len(stock_keys[target_stock]) > 0:
+                key = stock_keys[target_stock].pop(0)
+                bot.send_message(u_id, f"🎉 **Payment Approved!**\n\nKey for **{PRODUCTS[p_key]['name']} ({d_code.upper()})**:\n\n`{key}`", parse_mode="Markdown")
                 
-                # Save to user purchases
                 if u_id not in user_orders:
                     user_orders[u_id] = []
-                user_orders[u_id].append(f"📦 {order_id} — main/id1d\nKey: `{key}`")
+                user_orders[u_id].append(f"📦 {order_id} — {p_key}/{d_code}\nKey: `{key}`")
 
                 bot.send_message(call.from_user.id, f"✅ Order `{order_id}` Approved & Key delivered!")
             else:
-                bot.send_message(call.from_user.id, f"⚠️ Stock Empty! Add key first using /admin")
+                bot.send_message(call.from_user.id, f"⚠️ Stock Empty for `{target_stock}`! Add key first.")
             del pending_orders[order_id]
 
-# --- PROOF & ADMIN KEY INPUT HANDLER ---
+# --- PROOF & ADMIN KEY HANDLER ---
 @bot.message_handler(content_types=['text', 'photo'])
 def handle_text_inputs(message):
     chat_id = message.chat.id
+    user_state = admin_states.get(chat_id, "")
 
     # Admin Adding Key
-    if (chat_id == ADMIN_ID or message.from_user.username == "HassanXMods1") and admin_states.get(chat_id) == "ADD_KEY":
-        key = message.text
-        stock_keys["main_id_1d"].append(key)
+    if user_state.startswith("ADDING_KEY_"):
+        _, _, p_key, d_code = user_state.split("_")
+        target_stock = f"{p_key}_{d_code}"
+        key = message.text.strip()
+        
+        stock_keys[target_stock].append(key)
         admin_states[chat_id] = None
-        bot.send_message(chat_id, f"✅ **Key added to main_id_1d!**\n\nKey: `{key}`", parse_mode="Markdown", reply_markup=get_admin_panel())
+        bot.send_message(chat_id, f"✅ **Key added to {PRODUCTS[p_key]['name']} ({d_code})!**\n\nTotal Stock Now: {len(stock_keys[target_stock])}", parse_mode="Markdown", reply_markup=get_admin_panel())
         return
 
     # User Sending Proof
-    if admin_states.get(chat_id) == "WAITING_PROOF":
+    if user_state.startswith("WAITING_PROOF_"):
+        _, _, p_key, d_code = user_state.split("_")
+        
         random_id = "".join(random.choices(string.digits, k=12))
         random_suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=4))
         order_id = f"ORD-{random_id}-{random_suffix}"
+        
         pending_orders[order_id] = chat_id
         admin_states[chat_id] = None
 
-        # User Confirmation
-        bot.send_message(chat_id, f"✅ **Payment proof received!**\n\nOrder ID:\n`{order_id}`\n\nOur team will verify and deliver your key within a few minutes.\nFor status updates:\n{ADMIN_USERNAME}", parse_mode="Markdown")
+        bot.send_message(chat_id, f"✅ **Payment proof received!**\n\nOrder ID:\n`{order_id}`\n\nOur team will verify and deliver your key shortly.\nUpdates: {ADMIN_USERNAME}", parse_mode="Markdown")
 
-        # Notify Admin with Approve Button
         markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton(f"✅ Approved — Order {order_id}", callback_data=f"approve_{order_id}"))
+        markup.add(types.InlineKeyboardButton(f"✅ Approve — {order_id}", callback_data=f"approve_{order_id}_{p_key}_{d_code}"))
         
-        admin_msg = f"📩 **New Payment Proof!**\nOrder: `{order_id}`\nUser: @{message.from_user.username or 'NoUser'} (`{chat_id}`)\nCategory: 1 Day\nAmount: ₹100"
+        price = PRODUCTS[p_key]["prices"][d_code]
+        admin_msg = f"📩 **New Payment Proof!**\nOrder: `{order_id}`\nPanel: {PRODUCTS[p_key]['name']}\nCategory: {d_code.upper()}\nAmount: ₹{price}\nUser: @{message.from_user.username or 'NoUser'} (`{chat_id}`)"
         
-        # Admin Target (ID or Username fallback)
         target_admin = ADMIN_ID if ADMIN_ID else message.chat.id
 
         if message.photo:
@@ -204,4 +264,3 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
-    
