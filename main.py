@@ -1,13 +1,18 @@
 import os
 import random
 import string
-from flask import Flask, request
+import requests
+from flask import Flask, request, jsonify
 import telebot
 from telebot import types
 
 TOKEN = os.environ.get('BOT_TOKEN')
 ADMIN_IDS = [7172828025, 8705494010]
 PRIMARY_ADMIN_ID = 7172828025
+
+# Razorpay Keys
+RAZORPAY_KEY_ID = os.environ.get('RAZORPAY_KEY_ID', 'rzp_test_TGrOAdSNybrtLb')
+RAZORPAY_KEY_SECRET = os.environ.get('RAZORPAY_KEY_SECRET', '4RDT6rNXxygnnSG0WK5F7OTR')
 
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
@@ -45,7 +50,6 @@ stock_keys = {
 pending_orders = {}
 user_orders = {}
 user_states = {}
-last_bot_messages = {}
 
 def is_admin(user_id):
     return user_id in ADMIN_IDS
@@ -56,13 +60,50 @@ def safe_delete(chat_id, message_id):
     except Exception:
         pass
 
+# --- RAZORPAY PAYMENT LINK GENERATOR ---
+def create_razorpay_payment_link(amount, description, customer_name, order_id):
+    url = "https://api.razorpay.com/v1/payment_links"
+    payload = {
+        "amount": amount * 100,  # Razorpay accepts in paise
+        "currency": "INR",
+        "accept_partial": False,
+        "description": description,
+        "customer": {
+            "name": customer_name
+        },
+        "notify": {
+            "sms": False,
+            "email": False
+        },
+        "reminder_enable": False,
+        "notes": {
+            "order_id": order_id
+        },
+        "callback_url": "https://t.me/",
+        "callback_method": "get"
+    }
+    
+    try:
+        response = requests.post(
+            url, 
+            json=payload, 
+            auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET)
+        )
+        data = response.json()
+        if "short_url" in data:
+            return data["short_url"]
+        return None
+    except Exception as e:
+        print("Razorpay Error:", e)
+        return None
+
 # --- TEXT MESSAGES ---
 WELCOME_TEXT = (
     "👋 Welcome, Hassan X\n\n"
     "★ — 👑 Hassan X Mod Store 👑 — ★\n\n"
     "🔑 Premium All Best Mod Keys\n"
-    "⚡ Instant Delivery 24/7\n"
-    "🔒 100% Secure Payment\n"
+    "⚡ Instant Auto Delivery 24/7\n"
+    "🔒 100% Secure Payment (Razorpay)\n"
     "🏷 Best Prices Guaranteed\n"
     "🎁 High Discount Rewards\n"
     "🎧 Active Support For Set-Up\n\n"
@@ -141,6 +182,56 @@ def webhook():
         return 'OK', 200
     return 'Forbidden', 403
 
+# RAZORPAY AUTOMATIC PAYMENT WEBHOOK ROUTE
+@app.route('/razorpay-webhook', methods=['POST'])
+def razorpay_webhook():
+    event_data = request.json
+    if event_data and event_data.get('event') == 'payment_link.paid':
+        payment_entity = event_data['payload']['payment_link']['entity']
+        notes = payment_entity.get('notes', {})
+        order_id = notes.get('order_id')
+
+        if order_id in pending_orders:
+            order_info = pending_orders[order_id]
+            u_id = order_info['user_id']
+            p_key = order_info['p_key']
+            d_code = order_info['d_code']
+            target_stock = f"{p_key}:{d_code}"
+
+            if len(stock_keys[target_stock]) > 0:
+                key = stock_keys[target_stock].pop(0)
+                game_name = PRODUCTS[p_key]['name']
+                duration_str = DAYS_MAP.get(d_code, d_code.upper())
+
+                delivery_msg = (
+                    f"✅ **Auto-Payment Received!**\n\n"
+                    f"🎮 **Game:** {game_name}\n"
+                    f"⌛ **Duration:** {duration_str}\n"
+                    f"🔑 **Key:** `{key}`\n"
+                    f"🙏 **Thank you for your purchase!**\n\n"
+                    f"All apk DM pe mileinge @HassanXMods1"
+                )
+                
+                bot.send_message(u_id, delivery_msg, parse_mode="Markdown")
+                
+                if u_id not in user_orders:
+                    user_orders[u_id] = []
+                user_orders[u_id].append(f"📦 Order: `{order_id}`\nGame: {game_name}\nDuration: {duration_str}\nKey: `{key}`")
+
+                # Notify Admin of Auto Sale
+                bot.send_message(
+                    PRIMARY_ADMIN_ID, 
+                    f"⚡ **AUTO SALE COMPLETED!**\n\nOrder: `{order_id}`\nPanel: {game_name}\nUser ID: `{u_id}`\nKey Sent: `{key}`",
+                    parse_mode="Markdown"
+                )
+            else:
+                bot.send_message(u_id, "⚠️ Payment verified, but stock was empty! Please contact support @HassanXMods1")
+                bot.send_message(PRIMARY_ADMIN_ID, f"🚨 **AUTO SALE FAILED (NO STOCK)!**\nUser `{u_id}` paid for `{order_id}` but stock was empty!")
+
+            del pending_orders[order_id]
+
+    return jsonify({"status": "ok"}), 200
+
 # --- COMMANDS ---
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -154,7 +245,7 @@ def admin_command(message):
     else:
         bot.send_message(message.chat.id, "❌ **Access Denied!**")
 
-# --- CALLBACK HANDLER (EDIT MESSAGE SYSTEM) ---
+# --- CALLBACK HANDLER ---
 @bot.callback_query_handler(func=lambda call: True)
 def callback_listener(call):
     chat_id = call.message.chat.id
@@ -168,7 +259,6 @@ def callback_listener(call):
     except:
         pass
 
-    # Dynamic Editing System
     if action == "nav":
         sub = data[1]
         if sub == "open_shop":
@@ -204,8 +294,8 @@ def callback_listener(call):
                 "❓ **How to Use — Tutorial Video**\n\n"
                 "1. Click Shop Now.\n"
                 "2. Select product & validity.\n"
-                "3. Pay exact amount via QR / UPI.\n"
-                "4. Get Instant Key Delivery.\n\n"
+                "3. Pay via Auto Razorpay Link.\n"
+                "4. Get Instant Key Delivery automatically!\n\n"
                 "Tap button below if you need more help!"
             )
             bot.edit_message_text(text, chat_id, message_id, parse_mode="Markdown", reply_markup=get_back_button())
@@ -219,30 +309,36 @@ def callback_listener(call):
         price = PRODUCTS[p_key]["prices"][d_code]
         p_name = PRODUCTS[p_key]["name"]
 
-        payment_text = (
-            f"👑 💳 — **Hassan X Mod Store** — 👑\n\n"
-            f"Panel: {p_name}\nCategory: {d_code.upper()}\nPrice: ₹{price}\n\n"
-            f"💳 **UPI ID**: `8171733966@fam`\nName: Harsaan Ali Khan\n\n"
-            f"Please pay exact amount and send UTR / Screenshot here."
+        random_id = "".join(random.choices(string.digits, k=10))
+        order_id = f"ORD-{random_id}"
+
+        pending_orders[order_id] = {
+            "user_id": chat_id,
+            "p_key": p_key,
+            "d_code": d_code
+        }
+
+        payment_link = create_razorpay_payment_link(
+            price, 
+            f"{p_name} ({d_code.upper()})", 
+            call.from_user.first_name, 
+            order_id
         )
-        qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=upi://pay?pa=8171733966@fam&pn=Harsaan%20Ali%20Khan&am={price}"
-        
-        # Safe edit/delete flow for QR
-        safe_delete(chat_id, message_id)
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("✅ I Have Paid", callback_data=f"paid:{p_key}:{d_code}"))
-        sent_qr = bot.send_photo(chat_id, qr_url, caption=payment_text, parse_mode="Markdown", reply_markup=markup)
-        last_bot_messages[chat_id] = sent_qr.message_id
 
-    elif action == "paid":
-        p_key, d_code = data[1], data[2]
-        user_states[chat_id] = f"WAITING_PROOF:{p_key}:{d_code}"
-        
-        if chat_id in last_bot_messages:
-            safe_delete(chat_id, last_bot_messages[chat_id])
+        if payment_link:
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("💳 Pay Now (Auto Delivery)", url=payment_link))
+            markup.add(types.InlineKeyboardButton("🔙 Back to Shop", callback_data="nav:open_shop"))
 
-        msg = bot.send_message(chat_id, "📸 Send your **12-digit UTR / Transaction ID** or **Screenshot** here:")
-        last_bot_messages[chat_id] = msg.message_id
+            payment_text = (
+                f"👑 💳 — **Hassan X Mod Store** — 👑\n\n"
+                f"Panel: **{p_name}**\nCategory: **{d_code.upper()}**\nPrice: **₹{price}**\n\n"
+                f"⚡ Click the button below to pay via Razorpay (UPI / Cards / Wallets).\n"
+                f"Key will be delivered automatically after payment!"
+            )
+            bot.edit_message_text(payment_text, chat_id, message_id, parse_mode="Markdown", reply_markup=markup)
+        else:
+            bot.send_message(chat_id, "❌ Error generating payment link. Please try again or contact support.")
 
     elif action == "admin":
         if not is_admin(user_id):
@@ -287,66 +383,6 @@ def callback_listener(call):
             user_states[chat_id] = f"UPDATING_PRICE:{p_key}:{d_code}"
             bot.send_message(chat_id, f"🔢 Current price for **{PRODUCTS[p_key]['name']} ({d_code})** is **₹{curr_p}**.\n\nPlease type and send the **NEW PRICE** (only numbers):", parse_mode="Markdown")
 
-    elif action == "approve":
-        if not is_admin(user_id):
-            bot.answer_callback_query(call.id, "❌ Not Authorized!", show_alert=True)
-            return
-
-        order_id, p_key, d_code = data[1], data[2], data[3]
-        target_stock = f"{p_key}:{d_code}"
-
-        if order_id in pending_orders:
-            u_id = pending_orders[order_id]
-            if len(stock_keys[target_stock]) > 0:
-                key = stock_keys[target_stock].pop(0)
-                game_name = PRODUCTS[p_key]['name']
-                duration_str = DAYS_MAP.get(d_code, d_code.upper())
-
-                delivery_msg = (
-                    f"✅ **Payment Successful!**\n"
-                    f"🎮 **Game:** {game_name}\n"
-                    f"⌛ **Duration:** {duration_str}\n"
-                    f"🔑 **Key:** `{key}`\n"
-                    f"🙏 **Thank you for your purchase!**\n\n"
-                    f"All apk DM pe mileinge @HassanXMods1"
-                )
-                
-                bot.send_message(u_id, delivery_msg, parse_mode="Markdown")
-                
-                if u_id not in user_orders:
-                    user_orders[u_id] = []
-                user_orders[u_id].append(f"📦 Order: `{order_id}`\nGame: {game_name}\nDuration: {duration_str}\nKey: `{key}`")
-
-                try:
-                    bot.edit_message_caption(caption=call.message.caption + "\n\n✅ **STATUS: APPROVED**", chat_id=chat_id, message_id=message_id, reply_markup=None)
-                except Exception:
-                    try:
-                        bot.edit_message_text(text=call.message.text + "\n\n✅ **STATUS: APPROVED**", chat_id=chat_id, message_id=message_id, reply_markup=None)
-                    except Exception:
-                        pass
-            else:
-                bot.send_message(chat_id, f"⚠️ Stock Empty for **{PRODUCTS[p_key]['name']} ({d_code})**! Add key using /admin first.")
-            del pending_orders[order_id]
-
-    elif action == "cancel":
-        if not is_admin(user_id):
-            bot.answer_callback_query(call.id, "❌ Not Authorized!", show_alert=True)
-            return
-
-        order_id = data[1]
-        if order_id in pending_orders:
-            u_id = pending_orders[order_id]
-            bot.send_message(u_id, f"❌ **Payment Rejected**\n\nYour payment for Order `{order_id}` was rejected.\nContact support @HassanXMods1 if this is a mistake.", parse_mode="Markdown")
-            
-            try:
-                bot.edit_message_caption(caption=call.message.caption + "\n\n❌ **STATUS: CANCELLED**", chat_id=chat_id, message_id=message_id, reply_markup=None)
-            except Exception:
-                try:
-                    bot.edit_message_text(text=call.message.text + "\n\n❌ **STATUS: CANCELLED**", chat_id=chat_id, message_id=message_id, reply_markup=None)
-                except Exception:
-                    pass
-            del pending_orders[order_id]
-
 # --- TEXT / PHOTO HANDLER ---
 @bot.message_handler(content_types=['text', 'photo'])
 def handle_inputs(message):
@@ -385,43 +421,6 @@ def handle_inputs(message):
             user_states[chat_id] = None
             bot.send_message(chat_id, f"✅ **Key added to {PRODUCTS[p_key]['name']} ({d_code})!**\n\nTotal Stock Now: {len(stock_keys[target_stock])}", parse_mode="Markdown", reply_markup=get_admin_panel())
         return
-
-    if current_state.startswith("WAITING_PROOF:"):
-        _, p_key, d_code = current_state.split(":")
-
-        random_id = "".join(random.choices(string.digits, k=12))
-        random_suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=4))
-        order_id = f"ORD-{random_id}-{random_suffix}"
-
-        pending_orders[order_id] = chat_id
-        user_states[chat_id] = None
-
-        if chat_id in last_bot_messages:
-            safe_delete(chat_id, last_bot_messages[chat_id])
-        safe_delete(chat_id, message.message_id)
-
-        bot.send_message(chat_id, f"✅ **Payment proof received!**\n\nOrder ID:\n`{order_id}`\n\nOur team will verify and deliver your key shortly.\nUpdates: @HassanXMods1", parse_mode="Markdown")
-
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            types.InlineKeyboardButton("✅ Approve", callback_data=f"approve:{order_id}:{p_key}:{d_code}"),
-            types.InlineKeyboardButton("❌ Cancel", callback_data=f"cancel:{order_id}")
-        )
-
-        price = PRODUCTS[p_key]["prices"][d_code]
-        admin_msg = (
-            f"📩 **New Payment Proof!**\n\n"
-            f"Order: `{order_id}`\n"
-            f"Panel: {PRODUCTS[p_key]['name']}\n"
-            f"Category: {d_code.upper()}\n"
-            f"Amount: ₹{price}\n"
-            f"User: @{message.from_user.username or 'NoUser'} (`{chat_id}`)"
-        )
-
-        if message.photo:
-            bot.send_photo(PRIMARY_ADMIN_ID, message.photo[-1].file_id, caption=admin_msg, parse_mode="Markdown", reply_markup=markup)
-        else:
-            bot.send_message(PRIMARY_ADMIN_ID, f"{admin_msg}\nProof/UTR: {message.text}", parse_mode="Markdown", reply_markup=markup)
 
 # --- WEBHOOK SETTER ---
 if __name__ == "__main__":
