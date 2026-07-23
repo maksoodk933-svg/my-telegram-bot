@@ -183,11 +183,11 @@ def callback_listener(call):
             bot.edit_message_text(text, chat_id, message_id, parse_mode="Markdown", reply_markup=get_back_button())
         elif sub == "purchases":
             if chat_id in user_orders and user_orders[chat_id]:
-                orders_txt = "\n\n".join(user_orders[chat_id])
-                text = f"🔑 **Your Active Orders:**\n\n{orders_txt}"
+                orders_txt = "\n\n➖➖➖➖➖➖➖➖➖\n\n".join(user_orders[chat_id])
+                text = f"🔑 **Your Active Keys & Orders:**\n\n{orders_txt}"
             else:
                 text = "🔑 **Your Orders:**\n\nYou haven't made any purchases yet."
-            bot.edit_message_text(text, chat_id, message_id, parse_mode="Markdown", reply_markup=get_back_button())
+            bot.edit_message_text(text, chat_id, message_id, parse_mode="Markdown", reply_markup=get_back_button(), disable_web_page_preview=True)
         elif sub == "support":
             text = (
                 "🎧 **Support Center**\n\n"
@@ -303,19 +303,28 @@ def callback_listener(call):
                 duration_str = DAYS_MAP.get(d_code, d_code.upper())
 
                 delivery_msg = (
-                    f"✅ **Payment Successful!**\n"
+                    f"✅ Payment Successful!\n"
+                    f"🎮 Game: {game_name}\n"
+                    f"⌛ Duration: {duration_str}\n"
+                    f"🔑 Key: `{key}`\n\n"
+                    f"🙏 Thank you for your purchase!\n\n"
+                    f"PANEL SETUP AND APK LINK  https://t.me/+T-QvHT2k8Pw4NTI9"
+                )
+                
+                bot.send_message(u_id, delivery_msg, parse_mode="Markdown", disable_web_page_preview=True)
+                
+                # Update User's "My Orders" History
+                if u_id not in user_orders:
+                    user_orders[u_id] = []
+                
+                order_history_item = (
                     f"🎮 **Game:** {game_name}\n"
                     f"⌛ **Duration:** {duration_str}\n"
                     f"🔑 **Key:** `{key}`\n"
-                    f"🙏 **Thank you for your purchase!**\n\n"
-                    f"All apk DM pe mileinge @HassanXMods1"
+                    f"📦 **Order ID:** `{order_id}`\n"
+                    f"🔗 **Setup/APK:** https://t.me/+T-QvHT2k8Pw4NTI9"
                 )
-                
-                bot.send_message(u_id, delivery_msg, parse_mode="Markdown")
-                
-                if u_id not in user_orders:
-                    user_orders[u_id] = []
-                user_orders[u_id].append(f"📦 Order: `{order_id}`\nGame: {game_name}\nDuration: {duration_str}\nKey: `{key}`")
+                user_orders[u_id].append(order_history_item)
 
                 try:
                     bot.edit_message_caption(caption=call.message.caption + "\n\n✅ **STATUS: APPROVED**", chat_id=chat_id, message_id=message_id, reply_markup=None)
@@ -431,4 +440,3 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
-                           
