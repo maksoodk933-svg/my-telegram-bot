@@ -192,6 +192,7 @@ def callback_listener(call):
             msg += "\n"
         bot.send_message(call.from_user.id, msg, parse_mode="Markdown")
 
+    # --- APPROVE ORDER ---
     elif call.data.startswith("approve_"):
         data = call.data.replace("approve_", "")
         order_id, p_key, d_code = data.rsplit("_", 2)
@@ -210,7 +211,16 @@ def callback_listener(call):
 
                 bot.send_message(call.from_user.id, f"✅ Order `{order_id}` Approved & Key delivered!")
             else:
-                bot.send_message(call.from_user.id, f"⚠️ Stock Empty for `{target_stock}`! Add key first.")
+                bot.send_message(call.from_user.id, f"⚠️ Stock Empty for `{target_stock}`! Add key first using /admin.")
+            del pending_orders[order_id]
+
+    # --- CANCEL ORDER ---
+    elif call.data.startswith("cancel_"):
+        order_id = call.data.replace("cancel_", "")
+        if order_id in pending_orders:
+            u_id = pending_orders[order_id]
+            bot.send_message(u_id, f"❌ **Your payment for Order `{order_id}` was rejected.**\n\nIf you think this is a mistake, please contact support {ADMIN_USERNAME}.", parse_mode="Markdown")
+            bot.send_message(call.from_user.id, f"❌ Order `{order_id}` has been cancelled.")
             del pending_orders[order_id]
 
 # --- PROOF & ADMIN KEY HANDLER ---
@@ -243,10 +253,15 @@ def handle_text_inputs(message):
         pending_orders[order_id] = chat_id
         admin_states[chat_id] = None
 
+        # Buyer Confirmation
         bot.send_message(chat_id, f"✅ **Payment proof received!**\n\nOrder ID:\n`{order_id}`\n\nOur team will verify and deliver your key shortly.\nUpdates: {ADMIN_USERNAME}", parse_mode="Markdown")
 
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton(f"✅ Approve — {order_id}", callback_data=f"approve_{order_id}_{p_key}_{d_code}"))
+        # Admin Approval & Cancel Buttons
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("✅ Approve", callback_data=f"approve_{order_id}_{p_key}_{d_code}"),
+            types.InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{order_id}")
+        )
         
         price = PRODUCTS[p_key]["prices"][d_code]
         admin_msg = f"📩 **New Payment Proof!**\nOrder: `{order_id}`\nPanel: {PRODUCTS[p_key]['name']}\nCategory: {d_code.upper()}\nAmount: ₹{price}\nUser: @{message.from_user.username or 'NoUser'} (`{chat_id}`)"
@@ -291,4 +306,3 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
-    
