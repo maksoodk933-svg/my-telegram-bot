@@ -2,6 +2,8 @@ import os
 import random
 import string
 import threading
+import time
+import requests
 from flask import Flask
 import telebot
 from telebot import types
@@ -253,14 +255,39 @@ def handle_text_inputs(message):
         else:
             bot.send_message(target_admin, f"{admin_msg}\nProof/UTR: {message.text}", parse_mode="Markdown", reply_markup=markup)
 
+# --- BOT RUNNER & SELF PING (CRASH-PROOF & ALWAYS ON) ---
+def run_bot():
+    while True:
+        try:
+            print("Starting Bot Polling...")
+            bot.remove_webhook()
+            time.sleep(1)
+            bot.infinity_polling(skip_pending=True, timeout=20, long_polling_timeout=10)
+        except Exception as e:
+            print(f"Polling error occurred: {e}")
+            time.sleep(5)
+
+def keep_alive():
+    url = "https://my-telegram-bot-kamx.onrender.com/"
+    while True:
+        time.sleep(600)  # Har 10 minute mein Render server ko ping karega
+        try:
+            requests.get(url)
+            print("Auto-ping sent to keep server awake!")
+        except Exception as e:
+            print(f"Ping failed: {e}")
+
 if __name__ == "__main__":
-    def run_bot():
-        bot.remove_webhook()
-        bot.infinity_polling(skip_pending=True)
+    # Start Keep Alive Thread (Auto-Sleep Protection)
+    ping_thread = threading.Thread(target=keep_alive)
+    ping_thread.daemon = True
+    ping_thread.start()
 
-    t = threading.Thread(target=run_bot)
-    t.daemon = True
-    t.start()
+    # Start Bot Thread (Crash Protection)
+    bot_thread = threading.Thread(target=run_bot)
+    bot_thread.daemon = True
+    bot_thread.start()
 
+    # Start Web Server
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
