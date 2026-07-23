@@ -56,37 +56,40 @@ def safe_delete(chat_id, message_id):
     except Exception:
         pass
 
-# --- MAIN START INLINE MENU ---
+# --- TEXT MESSAGES ---
+WELCOME_TEXT = (
+    "👋 Welcome, Hassan X\n\n"
+    "★ — 👑 Hassan X Mod Store 👑 — ★\n\n"
+    "🔑 Premium All Best Mod Keys\n"
+    "⚡ Instant Delivery 24/7\n"
+    "🔒 100% Secure Payment\n"
+    "🏷 Best Prices Guaranteed\n"
+    "🎁 High Discount Rewards\n"
+    "🎧 Active Support For Set-Up\n\n"
+    "🚀 Tap Shop Now To Start!"
+)
+
+# --- INLINE MENUS ---
 def get_start_inline_menu():
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(types.InlineKeyboardButton("🛒 Shop Now", callback_data="nav:open_shop"))
     markup.add(
-        types.InlineKeyboardButton("🛒 My Purchases", callback_data="user:purchases"),
+        types.InlineKeyboardButton("🔑 My Orders", callback_data="user:purchases"),
         types.InlineKeyboardButton("👤 Profile", callback_data="user:profile")
     )
     markup.add(
-        types.InlineKeyboardButton("💬 Support", callback_data="user:support"),
-        types.InlineKeyboardButton("📖 How to Buy", callback_data="info:how_to_buy")
+        types.InlineKeyboardButton("❓ How to Use", callback_data="info:how_to_buy"),
+        types.InlineKeyboardButton("🎧 Support", callback_data="user:support")
     )
     return markup
 
-# --- PANELS INLINE MENU ---
 def get_main_panel_inline():
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
         types.InlineKeyboardButton("🎁 MAIN ID PANEL", callback_data="select:main_id"),
         types.InlineKeyboardButton("💧 PRIME HOOK", callback_data="select:prime"),
         types.InlineKeyboardButton("🔺 DRIP CLIENT", callback_data="select:drip"),
-        types.InlineKeyboardButton("🔙 Back to Main Menu", callback_data="nav:go_start")
-    )
-    return markup
-
-def get_admin_panel():
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("➕ Add Key", callback_data="admin:add_key"),
-        types.InlineKeyboardButton("📊 View Stock", callback_data="admin:view_stock"),
-        types.InlineKeyboardButton("💰 Update Price", callback_data="admin:select_price_panel")
+        types.InlineKeyboardButton("🔙 Back to Menu", callback_data="nav:go_start")
     )
     return markup
 
@@ -107,7 +110,21 @@ def get_category_inline(panel_key):
             
         markup.add(types.InlineKeyboardButton(btn_text, callback_data=c_data))
         
-    markup.add(types.InlineKeyboardButton("🔙 Go Back", callback_data="nav:open_shop"))
+    markup.add(types.InlineKeyboardButton("🔙 Back to Menu", callback_data="nav:open_shop"))
+    return markup
+
+def get_back_button():
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("🔙 Back to Menu", callback_data="nav:go_start"))
+    return markup
+
+def get_admin_panel():
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("➕ Add Key", callback_data="admin:add_key"),
+        types.InlineKeyboardButton("📊 View Stock", callback_data="admin:view_stock"),
+        types.InlineKeyboardButton("💰 Update Price", callback_data="admin:select_price_panel")
+    )
     return markup
 
 # --- WEBHOOK ROUTES ---
@@ -128,12 +145,7 @@ def webhook():
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user_states[message.chat.id] = None
-    text = (
-        f"🎉 Welcome to 👑 — Hassan X Mod Store — 👑, {message.from_user.first_name}!\n\n"
-        f"We sell premium keys for top mobile games.\n\n"
-        f"🤖 Choose an option below:"
-    )
-    bot.send_message(message.chat.id, text, reply_markup=get_start_inline_menu())
+    bot.send_message(message.chat.id, WELCOME_TEXT, reply_markup=get_start_inline_menu())
 
 @bot.message_handler(commands=['admin'])
 def admin_command(message):
@@ -142,11 +154,12 @@ def admin_command(message):
     else:
         bot.send_message(message.chat.id, "❌ **Access Denied!**")
 
-# --- CALLBACK HANDLER ---
+# --- CALLBACK HANDLER (EDIT MESSAGE SYSTEM) ---
 @bot.callback_query_handler(func=lambda call: True)
 def callback_listener(call):
     chat_id = call.message.chat.id
     user_id = call.from_user.id
+    message_id = call.message.message_id
     data = call.data.split(":")
     action = data[0]
 
@@ -155,36 +168,51 @@ def callback_listener(call):
     except:
         pass
 
+    # Dynamic Editing System
     if action == "nav":
         sub = data[1]
         if sub == "open_shop":
-            bot.edit_message_text("🛒 **Select Panel:**", chat_id, call.message.message_id, parse_mode="Markdown", reply_markup=get_main_panel_inline())
+            bot.edit_message_text("🛒 **Select Your Mod Panel:**", chat_id, message_id, parse_mode="Markdown", reply_markup=get_main_panel_inline())
         elif sub == "go_start":
-            bot.edit_message_text(f"🎉 Welcome to 👑 — Hassan X Mod Store — 👑!\n\n🤖 Choose an option below:", chat_id, call.message.message_id, reply_markup=get_start_inline_menu())
+            bot.edit_message_text(WELCOME_TEXT, chat_id, message_id, reply_markup=get_start_inline_menu())
 
     elif action == "user":
         sub = data[1]
         if sub == "profile":
-            text = f"👤 **Profile**\n\nName: {call.from_user.first_name}\nUsername: @{call.from_user.username or 'None'}\nID: `{user_id}`"
-            bot.send_message(chat_id, text, parse_mode="Markdown")
+            text = f"👤 **Profile Info**\n\nName: {call.from_user.first_name}\nUsername: @{call.from_user.username or 'None'}\nID: `{user_id}`"
+            bot.edit_message_text(text, chat_id, message_id, parse_mode="Markdown", reply_markup=get_back_button())
         elif sub == "purchases":
             if chat_id in user_orders and user_orders[chat_id]:
                 orders_txt = "\n\n".join(user_orders[chat_id])
-                bot.send_message(chat_id, f"📦 **Your Purchases**\n\n{orders_txt}", parse_mode="Markdown")
+                text = f"🔑 **Your Active Orders:**\n\n{orders_txt}"
             else:
-                bot.send_message(chat_id, "📦 **Your Purchases**\n\nYou haven't made any purchases yet.", parse_mode="Markdown")
+                text = "🔑 **Your Orders:**\n\nYou haven't made any purchases yet."
+            bot.edit_message_text(text, chat_id, message_id, parse_mode="Markdown", reply_markup=get_back_button())
         elif sub == "support":
-            bot.send_message(chat_id, "💬 **Support:**\n\nContact us at @HassanXMods1 for any issues.")
-
-    elif action == "select":
-        panel_key = data[1]
-        bot.edit_message_text(f"🛒 Select Category for {PRODUCTS[panel_key]['name']}:", chat_id, call.message.message_id, reply_markup=get_category_inline(panel_key))
+            text = (
+                "🎧 **Support Center**\n\n"
+                "👤 Telegram: @HassanXMods1\n"
+                "If you need any help, contact us on Telegram, explain your issue, and please wait for our reply."
+            )
+            bot.edit_message_text(text, chat_id, message_id, parse_mode="Markdown", reply_markup=get_back_button())
 
     elif action == "info":
         if data[1] == "sold_out":
             bot.answer_callback_query(call.id, "This category is currently Sold Out!", show_alert=True)
         elif data[1] == "how_to_buy":
-            bot.send_message(chat_id, "📖 **How to Buy:**\n1. Click 'Shop Now' & Select Panel.\n2. Choose Validity.\n3. Pay exact amount via QR/UPI ID.\n4. Send 12-digit UTR or Screenshot.\n5. Wait 2-5 mins for verification!")
+            text = (
+                "❓ **How to Use — Tutorial Video**\n\n"
+                "1. Click Shop Now.\n"
+                "2. Select product & validity.\n"
+                "3. Pay exact amount via QR / UPI.\n"
+                "4. Get Instant Key Delivery.\n\n"
+                "Tap button below if you need more help!"
+            )
+            bot.edit_message_text(text, chat_id, message_id, parse_mode="Markdown", reply_markup=get_back_button())
+
+    elif action == "select":
+        panel_key = data[1]
+        bot.edit_message_text(f"🛒 Select Category for **{PRODUCTS[panel_key]['name']}**:", chat_id, message_id, parse_mode="Markdown", reply_markup=get_category_inline(panel_key))
 
     elif action == "buy":
         p_key, d_code = data[1], data[2]
@@ -199,6 +227,8 @@ def callback_listener(call):
         )
         qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=upi://pay?pa=8171733966@fam&pn=Harsaan%20Ali%20Khan&am={price}"
         
+        # Safe edit/delete flow for QR
+        safe_delete(chat_id, message_id)
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("✅ I Have Paid", callback_data=f"paid:{p_key}:{d_code}"))
         sent_qr = bot.send_photo(chat_id, qr_url, caption=payment_text, parse_mode="Markdown", reply_markup=markup)
@@ -272,7 +302,6 @@ def callback_listener(call):
                 game_name = PRODUCTS[p_key]['name']
                 duration_str = DAYS_MAP.get(d_code, d_code.upper())
 
-                # CUSTOMIZED DELIVERY MESSAGE
                 delivery_msg = (
                     f"✅ **Payment Successful!**\n"
                     f"🎮 **Game:** {game_name}\n"
@@ -289,10 +318,10 @@ def callback_listener(call):
                 user_orders[u_id].append(f"📦 Order: `{order_id}`\nGame: {game_name}\nDuration: {duration_str}\nKey: `{key}`")
 
                 try:
-                    bot.edit_message_caption(caption=call.message.caption + "\n\n✅ **STATUS: APPROVED**", chat_id=chat_id, message_id=call.message.message_id, reply_markup=None)
+                    bot.edit_message_caption(caption=call.message.caption + "\n\n✅ **STATUS: APPROVED**", chat_id=chat_id, message_id=message_id, reply_markup=None)
                 except Exception:
                     try:
-                        bot.edit_message_text(text=call.message.text + "\n\n✅ **STATUS: APPROVED**", chat_id=chat_id, message_id=call.message.message_id, reply_markup=None)
+                        bot.edit_message_text(text=call.message.text + "\n\n✅ **STATUS: APPROVED**", chat_id=chat_id, message_id=message_id, reply_markup=None)
                     except Exception:
                         pass
             else:
@@ -310,10 +339,10 @@ def callback_listener(call):
             bot.send_message(u_id, f"❌ **Payment Rejected**\n\nYour payment for Order `{order_id}` was rejected.\nContact support @HassanXMods1 if this is a mistake.", parse_mode="Markdown")
             
             try:
-                bot.edit_message_caption(caption=call.message.caption + "\n\n❌ **STATUS: CANCELLED**", chat_id=chat_id, message_id=call.message.message_id, reply_markup=None)
+                bot.edit_message_caption(caption=call.message.caption + "\n\n❌ **STATUS: CANCELLED**", chat_id=chat_id, message_id=message_id, reply_markup=None)
             except Exception:
                 try:
-                    bot.edit_message_text(text=call.message.text + "\n\n❌ **STATUS: CANCELLED**", chat_id=chat_id, message_id=call.message.message_id, reply_markup=None)
+                    bot.edit_message_text(text=call.message.text + "\n\n❌ **STATUS: CANCELLED**", chat_id=chat_id, message_id=message_id, reply_markup=None)
                 except Exception:
                     pass
             del pending_orders[order_id]
