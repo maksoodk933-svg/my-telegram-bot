@@ -1,21 +1,18 @@
 import os
 import random
 import string
-import threading
-import time
-import requests
-from flask import Flask
+from flask import Flask, request
 import telebot
 from telebot import types
 
 TOKEN = os.environ.get('BOT_TOKEN')
-ADMIN_ID = int(os.environ.get('ADMIN_ID', 7172828025)) 
-ADMIN_USERNAME = "@HassanXMods1"
+ADMIN_IDS = [7172828025, 8705494010]
+PRIMARY_ADMIN_ID = 7172828025
 
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-# --- PRODUCTS & PRICING CONFIG ---
+# --- PRODUCTS CONFIG ---
 PRODUCTS = {
     "main_id": {
         "name": "🛡 MAIN ID PANEL",
@@ -31,16 +28,18 @@ PRODUCTS = {
     }
 }
 
-# Key Storage
 stock_keys = {
-    f"{panel}_{days}": [] 
-    for panel in PRODUCTS.keys() 
-    for days in ["1d", "3d", "7d", "15d", "30d"]
+    f"{p}:{d}": [] 
+    for p in PRODUCTS.keys() 
+    for d in ["1d", "3d", "7d", "15d", "30d"]
 }
 
 pending_orders = {}
 user_orders = {}
-admin_states = {}
+user_states = {}
+
+def is_admin(user_id):
+    return user_id in ADMIN_IDS
 
 # --- KEYBOARDS ---
 def get_user_reply_keyboard():
@@ -51,62 +50,76 @@ def get_user_reply_keyboard():
 def get_admin_panel():
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
-        types.InlineKeyboardButton("➕ Add Key", callback_data="admin_add_key"),
-        types.InlineKeyboardButton("📊 View Stock", callback_data="admin_view_stock"),
-        types.InlineKeyboardButton("📢 Broadcast Message", callback_data="admin_broadcast"),
-        types.InlineKeyboardButton("📊 Server Status", callback_data="admin_status")
+        types.InlineKeyboardButton("➕ Add Key", callback_data="admin:add_key"),
+        types.InlineKeyboardButton("📊 View Stock", callback_data="admin:view_stock")
     )
     return markup
 
 def get_main_panel_inline():
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
-        types.InlineKeyboardButton("🎁 MAIN ID PANEL", callback_data="select_main_id"),
-        types.InlineKeyboardButton("💧 PRIME HOOK", callback_data="select_prime"),
-        types.InlineKeyboardButton("🔺 DRIP CLIENT", callback_data="select_drip"),
-        types.InlineKeyboardButton("📖 How to Buy", callback_data="how_to_buy")
+        types.InlineKeyboardButton("🎁 MAIN ID PANEL", callback_data="select:main_id"),
+        types.InlineKeyboardButton("💧 PRIME HOOK", callback_data="select:prime"),
+        types.InlineKeyboardButton("🔺 DRIP CLIENT", callback_data="select:drip"),
+        types.InlineKeyboardButton("📖 How to Buy", callback_data="info:how_to_buy")
     )
     return markup
 
 def get_category_inline(panel_key):
     markup = types.InlineKeyboardMarkup(row_width=1)
     panel_info = PRODUCTS[panel_key]
-    
     days_map = {"1d": "1 Day", "3d": "3 Days", "7d": "7 Days", "15d": "15 Days", "30d": "30 Days"}
     
     for day_code, label in days_map.items():
         price = panel_info["prices"][day_code]
-        stock_count = len(stock_keys.get(f"{panel_key}_{day_code}", []))
+        stock_count = len(stock_keys.get(f"{panel_key}:{day_code}", []))
         
         if stock_count > 0:
             btn_text = f"{label} - ₹{price}"
-            c_data = f"buy_{panel_key}_{day_code}"
+            c_data = f"buy:{panel_key}:{day_code}"
         else:
             btn_text = f"{label} - ❌ Sold Out"
-            c_data = "sold_out"
+            c_data = "info:sold_out"
             
         markup.add(types.InlineKeyboardButton(btn_text, callback_data=c_data))
         
-    markup.add(types.InlineKeyboardButton("🔙 Go Back", callback_data="go_main"))
+    markup.add(types.InlineKeyboardButton("🔙 Go Back", callback_data="nav:go_main"))
     return markup
 
-# --- ROUTES & COMMANDS ---
-@app.route('/')
+# --- WEBHOOK ROUTES ---
+@app.route('/', methods=['GET'])
 def home():
-    return "Bot Server is Alive!"
+    return "Bot Webhook Server Active!"
 
+@app.route(f'/{TOKEN}', methods=['POST'])
+def webhook():
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return 'OK', 200
+    return 'Forbidden', 403
+
+# --- COMMANDS ---
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    text = f"🎉 Welcome to 👑 — Hassan X Mod Store — 👑, {message.from_user.first_name}!\n\nWe sell premium keys for top mobile games.\n\n🤖 Choose a panel below to browse and buy:"
+    user_states[message.chat.id] = None
+    text = (
+        f"🎉 Welcome to 👑 — Hassan X Mod Store — 👑, {message.from_user.first_name}!\n\n"
+        f"We sell premium keys for top mobile games.\n\n"
+        f"🤖 Choose a panel below to browse and buy:"
+    )
     bot.send_message(message.chat.id, text, reply_markup=get_user_reply_keyboard())
     bot.send_message(message.chat.id, "Select Panel:", reply_markup=get_main_panel_inline())
 
 @bot.message_handler(commands=['admin'])
 def admin_command(message):
-    if message.from_user.id == ADMIN_ID or message.from_user.username == "HassanXMods1":
+    if is_admin(message.from_user.id):
         bot.send_message(message.chat.id, "🛠️ **Admin Control Panel**", parse_mode="Markdown", reply_markup=get_admin_panel())
+    else:
+        bot.send_message(message.chat.id, "❌ **Access Denied!**")
 
-# --- USER BUTTONS ---
+# --- USER REPLY BUTTONS ---
 @bot.message_handler(func=lambda msg: msg.text == "🏠 Main Menu")
 def main_menu(message):
     send_welcome(message)
@@ -120,36 +133,46 @@ def user_profile(message):
 def my_purchases(message):
     chat_id = message.chat.id
     if chat_id in user_orders and user_orders[chat_id]:
-        orders_txt = "\n".join(user_orders[chat_id])
+        orders_txt = "\n\n".join(user_orders[chat_id])
         bot.send_message(chat_id, f"📦 **Your Purchases**\n\n{orders_txt}", parse_mode="Markdown")
     else:
         bot.send_message(chat_id, "📦 **Your Purchases**\n\nYou haven't made any purchases yet.", parse_mode="Markdown")
 
 @bot.message_handler(func=lambda msg: msg.text == "💬 Support")
 def support_info(message):
-    bot.send_message(message.chat.id, f"📞 Contact us at {ADMIN_USERNAME} for any issues.")
+    bot.send_message(message.chat.id, "📞 Contact us at @HassanXMods1 for any issues.")
 
-# --- CALLBACKS ---
+# --- CALLBACK HANDLER ---
 @bot.callback_query_handler(func=lambda call: True)
 def callback_listener(call):
     chat_id = call.message.chat.id
-    
-    if call.data.startswith("select_"):
-        panel_key = call.data.replace("select_", "")
+    user_id = call.from_user.id
+    data = call.data.split(":")
+    action = data[0]
+
+    try:
+        bot.answer_callback_query(call.id)
+    except:
+        pass
+
+    if action == "select":
+        panel_key = data[1]
         bot.edit_message_text(f"🛒 Select Category for {PRODUCTS[panel_key]['name']}:", chat_id, call.message.message_id, reply_markup=get_category_inline(panel_key))
-        
-    elif call.data == "sold_out":
-        bot.answer_callback_query(call.id, "This category is currently Sold Out!", show_alert=True)
-        
-    elif call.data == "go_main":
+
+    elif action == "nav" and data[1] == "go_main":
         bot.edit_message_text("🤖 Choose a panel below to browse and buy:", chat_id, call.message.message_id, reply_markup=get_main_panel_inline())
-        
-    elif call.data.startswith("buy_"):
-        data = call.data.replace("buy_", "")
-        p_key, d_code = data.rsplit("_", 1)
+
+    elif action == "info":
+        if data[1] == "sold_out":
+            bot.answer_callback_query(call.id, "This category is currently Sold Out!", show_alert=True)
+        elif data[1] == "how_to_buy":
+            bot.send_message(chat_id, "📖 **How to Buy:**\n1. Select a Panel.\n2. Choose Validity.\n3. Pay exact amount via QR/UPI ID.\n4. Send 12-digit UTR or Screenshot.\n5. Wait 2-5 mins for verification!")
+
+    elif action == "buy":
+        p_key, d_code = data[1], data[2]
         price = PRODUCTS[p_key]["prices"][d_code]
         p_name = PRODUCTS[p_key]["name"]
-        
+
         payment_text = (
             f"👑 💳 — **Hassan X Mod Store** — 👑\n\n"
             f"Panel: {p_name}\nCategory: {d_code.upper()}\nPrice: ₹{price}\n\n"
@@ -159,46 +182,50 @@ def callback_listener(call):
         qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=upi://pay?pa=8171733966@fam&pn=Harsaan%20Ali%20Khan&am={price}"
         
         markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("✅ I Have Paid", callback_data=f"paid_{p_key}_{d_code}"))
+        markup.add(types.InlineKeyboardButton("✅ I Have Paid", callback_data=f"paid:{p_key}:{d_code}"))
         bot.send_photo(chat_id, qr_url, caption=payment_text, parse_mode="Markdown", reply_markup=markup)
 
-    elif call.data.startswith("paid_"):
-        data = call.data.replace("paid_", "")
-        p_key, d_code = data.rsplit("_", 1)
-        admin_states[chat_id] = f"WAITING_PROOF_{p_key}_{d_code}"
+    elif action == "paid":
+        p_key, d_code = data[1], data[2]
+        user_states[chat_id] = f"WAITING_PROOF:{p_key}:{d_code}"
         bot.send_message(chat_id, "📸 Send your **12-digit UTR / Transaction ID** or **Screenshot** here:")
 
-    # --- ADMIN CALLBACKS ---
-    elif call.data == "admin_add_key" and (call.from_user.id == ADMIN_ID or call.from_user.username == "HassanXMods1"):
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        for p_key, p_val in PRODUCTS.items():
-            for d_code in ["1d", "3d", "7d", "15d", "30d"]:
-                markup.add(types.InlineKeyboardButton(f"{p_val['name']} ({d_code})", callback_data=f"addstock_{p_key}_{d_code}"))
-        bot.send_message(call.from_user.id, "Select Panel & Plan to Add Key:", reply_markup=markup)
+    elif action == "admin":
+        if not is_admin(user_id):
+            bot.answer_callback_query(call.id, "❌ Access Denied!", show_alert=True)
+            return
 
-    elif call.data.startswith("addstock_"):
-        data = call.data.replace("addstock_", "")
-        p_key, d_code = data.rsplit("_", 1)
-        admin_states[call.from_user.id] = f"ADDING_KEY_{p_key}_{d_code}"
-        bot.send_message(call.from_user.id, f"📝 Send the key now for **{PRODUCTS[p_key]['name']} ({d_code})**:", parse_mode="Markdown")
+        sub_action = data[1]
+        if sub_action == "add_key":
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            for p_key, p_val in PRODUCTS.items():
+                for d_code in ["1d", "3d", "7d", "15d", "30d"]:
+                    markup.add(types.InlineKeyboardButton(f"{p_val['name']} ({d_code})", callback_data=f"admin:addstock:{p_key}:{d_code}"))
+            bot.send_message(chat_id, "Select Panel & Plan to Add Key:", reply_markup=markup)
 
-    elif call.data == "admin_view_stock" and (call.from_user.id == ADMIN_ID or call.from_user.username == "HassanXMods1"):
-        msg = "📊 **Current Stock:**\n\n"
-        for p_key, p_val in PRODUCTS.items():
-            msg += f"**{p_val['name']}**:\n"
-            for d_code in ["1d", "3d", "7d", "15d", "30d"]:
-                cnt = len(stock_keys.get(f"{p_key}_{d_code}", []))
-                msg += f" • {d_code}: `{cnt}` Keys\n"
-            msg += "\n"
-        bot.send_message(call.from_user.id, msg, parse_mode="Markdown")
+        elif sub_action == "addstock":
+            p_key, d_code = data[2], data[3]
+            user_states[chat_id] = f"ADDING_KEY:{p_key}:{d_code}"
+            bot.send_message(chat_id, f"📝 Send the key now for **{PRODUCTS[p_key]['name']} ({d_code})**:", parse_mode="Markdown")
 
-    # --- APPROVE ORDER ---
-    elif call.data.startswith("approve_"):
-        data = call.data.replace("approve_", "")
-        order_id, p_key, d_code = data.rsplit("_", 2)
-        
-        target_stock = f"{p_key}_{d_code}"
-        
+        elif sub_action == "view_stock":
+            msg = "📊 **Current Stock:**\n\n"
+            for p_key, p_val in PRODUCTS.items():
+                msg += f"**{p_val['name']}**:\n"
+                for d_code in ["1d", "3d", "7d", "15d", "30d"]:
+                    cnt = len(stock_keys.get(f"{p_key}:{d_code}", []))
+                    msg += f" • {d_code}: `{cnt}` Keys\n"
+                msg += "\n"
+            bot.send_message(chat_id, msg, parse_mode="Markdown")
+
+    elif action == "approve":
+        if not is_admin(user_id):
+            bot.answer_callback_query(call.id, "❌ Not Authorized!", show_alert=True)
+            return
+
+        order_id, p_key, d_code = data[1], data[2], data[3]
+        target_stock = f"{p_key}:{d_code}"
+
         if order_id in pending_orders:
             u_id = pending_orders[order_id]
             if len(stock_keys[target_stock]) > 0:
@@ -207,102 +234,87 @@ def callback_listener(call):
                 
                 if u_id not in user_orders:
                     user_orders[u_id] = []
-                user_orders[u_id].append(f"📦 {order_id} — {p_key}/{d_code}\nKey: `{key}`")
+                user_orders[u_id].append(f"📦 Order: `{order_id}`\nPanel: {PRODUCTS[p_key]['name']}\nPlan: {d_code.upper()}\nKey: `{key}`")
 
-                bot.send_message(call.from_user.id, f"✅ Order `{order_id}` Approved & Key delivered!")
+                bot.send_message(chat_id, f"✅ Order `{order_id}` Approved & Key delivered!")
             else:
-                bot.send_message(call.from_user.id, f"⚠️ Stock Empty for `{target_stock}`! Add key first using /admin.")
+                bot.send_message(chat_id, f"⚠️ Stock Empty for **{PRODUCTS[p_key]['name']} ({d_code})**! Add key using /admin first.")
             del pending_orders[order_id]
 
-    # --- CANCEL ORDER ---
-    elif call.data.startswith("cancel_"):
-        order_id = call.data.replace("cancel_", "")
+    elif action == "cancel":
+        if not is_admin(user_id):
+            bot.answer_callback_query(call.id, "❌ Not Authorized!", show_alert=True)
+            return
+
+        order_id = data[1]
         if order_id in pending_orders:
             u_id = pending_orders[order_id]
-            bot.send_message(u_id, f"❌ **Your payment for Order `{order_id}` was rejected.**\n\nIf you think this is a mistake, please contact support {ADMIN_USERNAME}.", parse_mode="Markdown")
-            bot.send_message(call.from_user.id, f"❌ Order `{order_id}` has been cancelled.")
+            bot.send_message(u_id, f"❌ **Payment Rejected**\n\nYour payment for Order `{order_id}` was rejected.\nContact support @HassanXMods1 if this is a mistake.", parse_mode="Markdown")
+            bot.send_message(chat_id, f"❌ Order `{order_id}` Cancelled.")
             del pending_orders[order_id]
 
-# --- PROOF & ADMIN KEY HANDLER ---
+# --- TEXT / PHOTO HANDLER ---
 @bot.message_handler(content_types=['text', 'photo'])
-def handle_text_inputs(message):
+def handle_inputs(message):
     chat_id = message.chat.id
-    user_state = admin_states.get(chat_id, "")
+    current_state = user_states.get(chat_id)
 
-    # Admin Adding Key
-    if user_state.startswith("ADDING_KEY_"):
-        data = user_state.replace("ADDING_KEY_", "")
-        p_key, d_code = data.rsplit("_", 1)
-        target_stock = f"{p_key}_{d_code}"
-        key = message.text.strip()
-        
-        stock_keys[target_stock].append(key)
-        admin_states[chat_id] = None
-        bot.send_message(chat_id, f"✅ **Key added to {PRODUCTS[p_key]['name']} ({d_code})!**\n\nTotal Stock Now: {len(stock_keys[target_stock])}", parse_mode="Markdown", reply_markup=get_admin_panel())
+    if not current_state:
         return
 
-    # User Sending Proof
-    if user_state.startswith("WAITING_PROOF_"):
-        data = user_state.replace("WAITING_PROOF_", "")
-        p_key, d_code = data.rsplit("_", 1)
-        
+    if current_state.startswith("ADDING_KEY:"):
+        if not is_admin(chat_id):
+            return
+
+        _, p_key, d_code = current_state.split(":")
+        target_stock = f"{p_key}:{d_code}"
+        key = message.text.strip() if message.text else ""
+
+        if key:
+            stock_keys[target_stock].append(key)
+            user_states[chat_id] = None
+            bot.send_message(chat_id, f"✅ **Key added to {PRODUCTS[p_key]['name']} ({d_code})!**\n\nTotal Stock Now: {len(stock_keys[target_stock])}", parse_mode="Markdown", reply_markup=get_admin_panel())
+        return
+
+    if current_state.startswith("WAITING_PROOF:"):
+        _, p_key, d_code = current_state.split(":")
+
         random_id = "".join(random.choices(string.digits, k=12))
         random_suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=4))
         order_id = f"ORD-{random_id}-{random_suffix}"
-        
+
         pending_orders[order_id] = chat_id
-        admin_states[chat_id] = None
+        user_states[chat_id] = None
 
-        # Buyer Confirmation
-        bot.send_message(chat_id, f"✅ **Payment proof received!**\n\nOrder ID:\n`{order_id}`\n\nOur team will verify and deliver your key shortly.\nUpdates: {ADMIN_USERNAME}", parse_mode="Markdown")
+        bot.send_message(chat_id, f"✅ **Payment proof received!**\n\nOrder ID:\n`{order_id}`\n\nOur team will verify and deliver your key shortly.\nUpdates: @HassanXMods1", parse_mode="Markdown")
 
-        # Admin Approval & Cancel Buttons
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
-            types.InlineKeyboardButton("✅ Approve", callback_data=f"approve_{order_id}_{p_key}_{d_code}"),
-            types.InlineKeyboardButton("❌ Cancel", callback_data=f"cancel_{order_id}")
+            types.InlineKeyboardButton("✅ Approve", callback_data=f"approve:{order_id}:{p_key}:{d_code}"),
+            types.InlineKeyboardButton("❌ Cancel", callback_data=f"cancel:{order_id}")
         )
-        
+
         price = PRODUCTS[p_key]["prices"][d_code]
-        admin_msg = f"📩 **New Payment Proof!**\nOrder: `{order_id}`\nPanel: {PRODUCTS[p_key]['name']}\nCategory: {d_code.upper()}\nAmount: ₹{price}\nUser: @{message.from_user.username or 'NoUser'} (`{chat_id}`)"
-        
-        target_admin = ADMIN_ID if ADMIN_ID else message.chat.id
+        admin_msg = (
+            f"📩 **New Payment Proof!**\n\n"
+            f"Order: `{order_id}`\n"
+            f"Panel: {PRODUCTS[p_key]['name']}\n"
+            f"Category: {d_code.upper()}\n"
+            f"Amount: ₹{price}\n"
+            f"User: @{message.from_user.username or 'NoUser'} (`{chat_id}`)"
+        )
 
         if message.photo:
-            bot.send_photo(target_admin, message.photo[-1].file_id, caption=admin_msg, parse_mode="Markdown", reply_markup=markup)
+            bot.send_photo(PRIMARY_ADMIN_ID, message.photo[-1].file_id, caption=admin_msg, parse_mode="Markdown", reply_markup=markup)
         else:
-            bot.send_message(target_admin, f"{admin_msg}\nProof/UTR: {message.text}", parse_mode="Markdown", reply_markup=markup)
+            bot.send_message(PRIMARY_ADMIN_ID, f"{admin_msg}\nProof/UTR: {message.text}", parse_mode="Markdown", reply_markup=markup)
 
-# --- BOT RUNNER & SELF PING ---
-def run_bot():
-    while True:
-        try:
-            print("Starting Bot Polling...")
-            bot.remove_webhook()
-            time.sleep(1)
-            bot.infinity_polling(skip_pending=True, timeout=20, long_polling_timeout=10)
-        except Exception as e:
-            print(f"Polling error occurred: {e}")
-            time.sleep(5)
-
-def keep_alive():
-    url = "https://my-telegram-bot-kamx.onrender.com/"
-    while True:
-        time.sleep(600)
-        try:
-            requests.get(url)
-            print("Auto-ping sent to keep server awake!")
-        except Exception as e:
-            print(f"Ping failed: {e}")
-
+# --- WEBHOOK SETTER ---
 if __name__ == "__main__":
-    ping_thread = threading.Thread(target=keep_alive)
-    ping_thread.daemon = True
-    ping_thread.start()
-
-    bot_thread = threading.Thread(target=run_bot)
-    bot_thread.daemon = True
-    bot_thread.start()
+    WEBHOOK_URL = f"https://my-telegram-bot-kamx.onrender.com/{TOKEN}"
+    bot.remove_webhook()
+    bot.set_webhook(url=WEBHOOK_URL)
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
+                         
