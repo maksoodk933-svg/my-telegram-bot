@@ -1,6 +1,8 @@
 import os
 import random
 import string
+import threading
+import time
 from flask import Flask, request
 import telebot
 from telebot import types
@@ -41,6 +43,16 @@ user_states = {}
 def is_admin(user_id):
     return user_id in ADMIN_IDS
 
+# Helper function to delete messages after delay
+def delayed_delete(chat_id, message_id, delay=15):
+    def _delete():
+        time.sleep(delay)
+        try:
+            bot.delete_message(chat_id, message_id)
+        except Exception:
+            pass
+    threading.Thread(target=_delete, daemon=True).start()
+
 # --- KEYBOARDS ---
 def get_user_reply_keyboard():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
@@ -51,7 +63,8 @@ def get_admin_panel():
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
         types.InlineKeyboardButton("➕ Add Key", callback_data="admin:add_key"),
-        types.InlineKeyboardButton("📊 View Stock", callback_data="admin:view_stock")
+        types.InlineKeyboardButton("📊 View Stock", callback_data="admin:view_stock"),
+        types.InlineKeyboardButton("💰 Update Price", callback_data="admin:select_price_panel")
     )
     return markup
 
@@ -166,7 +179,8 @@ def callback_listener(call):
         if data[1] == "sold_out":
             bot.answer_callback_query(call.id, "This category is currently Sold Out!", show_alert=True)
         elif data[1] == "how_to_buy":
-            bot.send_message(chat_id, "📖 **How to Buy:**\n1. Select a Panel.\n2. Choose Validity.\n3. Pay exact amount via QR/UPI ID.\n4. Send 12-digit UTR or Screenshot.\n5. Wait 2-5 mins for verification!")
+            msg = bot.send_message(chat_id, "📖 **How to Buy:**\n1. Select a Panel.\n2. Choose Validity.\n3. Pay exact amount via QR/UPI ID.\n4. Send 12-digit UTR or Screenshot.\n5. Wait 2-5 mins for verification!")
+            delayed_delete(chat_id, msg.message_id, delay=30)
 
     elif action == "buy":
         p_key, d_code = data[1], data[2]
@@ -188,7 +202,8 @@ def callback_listener(call):
     elif action == "paid":
         p_key, d_code = data[1], data[2]
         user_states[chat_id] = f"WAITING_PROOF:{p_key}:{d_code}"
-        bot.send_message(chat_id, "📸 Send your **12-digit UTR / Transaction ID** or **Screenshot** here:")
+        msg = bot.send_message(chat_id, "📸 Send your **12-digit UTR / Transaction ID** or **Screenshot** here:")
+        delayed_delete(chat_id, msg.message_id, delay=20)
 
     elif action == "admin":
         if not is_admin(user_id):
@@ -209,14 +224,30 @@ def callback_listener(call):
             bot.send_message(chat_id, f"📝 Send the key now for **{PRODUCTS[p_key]['name']} ({d_code})**:", parse_mode="Markdown")
 
         elif sub_action == "view_stock":
-            msg = "📊 **Current Stock:**\n\n"
+            msg = "📊 **Current Stock & Prices:**\n\n"
             for p_key, p_val in PRODUCTS.items():
                 msg += f"**{p_val['name']}**:\n"
                 for d_code in ["1d", "3d", "7d", "15d", "30d"]:
                     cnt = len(stock_keys.get(f"{p_key}:{d_code}", []))
-                    msg += f" • {d_code}: `{cnt}` Keys\n"
+                    prc = p_val["prices"][d_code]
+                    msg += f" • {d_code}: `{cnt}` Keys | ₹{prc}\n"
                 msg += "\n"
-            bot.send_message(chat_id, msg, parse_mode="Markdown")
+            sent = bot.send_message(chat_id, msg, parse_mode="Markdown")
+            delayed_delete(chat_id, sent.message_id, delay=30)
+
+        elif sub_action == "select_price_panel":
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            for p_key, p_val in PRODUCTS.items():
+                for d_code in ["1d", "3d", "7d", "15d", "30d"]:
+                    curr_price = p_val["prices"][d_code]
+                    markup.add(types.InlineKeyboardButton(f"{p_val['name']} ({d_code}) - ₹{curr_price}", callback_data=f"admin:editprice:{p_key}:{d_code}"))
+            bot.send_message(chat_id, "💰 Select Plan to Change Price:", reply_markup=markup)
+
+        elif sub_action == "editprice":
+            p_key, d_code = data[2], data[3]
+            curr_p = PRODUCTS[p_key]["prices"][d_code]
+            user_states[chat_id] = f"UPDATING_PRICE:{p_key}:{d_code}"
+            bot.send_message(chat_id, f"🔢 Current price for **{PRODUCTS[p_key]['name']} ({d_code})** is **₹{curr_p}**.\n\nPlease type and send the **NEW PRICE** (only numbers):", parse_mode="Markdown")
 
     elif action == "approve":
         if not is_admin(user_id):
@@ -236,7 +267,14 @@ def callback_listener(call):
                     user_orders[u_id] = []
                 user_orders[u_id].append(f"📦 Order: `{order_id}`\nPanel: {PRODUCTS[p_key]['name']}\nPlan: {d_code.upper()}\nKey: `{key}`")
 
-                bot.send_message(chat_id, f"✅ Order `{order_id}` Approved & Key delivered!")
+                # Edit Admin message to remove inline buttons
+                try:
+                    bot.edit_message_caption(caption=call.message.caption + "\n\n✅ **STATUS: APPROVED**", chat_id=chat_id, message_id=call.message.message_id, reply_markup=None)
+                except Exception:
+                    try:
+                        bot.edit_message_text(text=call.message.text + "\n\n✅ **STATUS: APPROVED**", chat_id=chat_id, message_id=call.message.message_id, reply_markup=None)
+                    except Exception:
+                        pass
             else:
                 bot.send_message(chat_id, f"⚠️ Stock Empty for **{PRODUCTS[p_key]['name']} ({d_code})**! Add key using /admin first.")
             del pending_orders[order_id]
@@ -250,7 +288,15 @@ def callback_listener(call):
         if order_id in pending_orders:
             u_id = pending_orders[order_id]
             bot.send_message(u_id, f"❌ **Payment Rejected**\n\nYour payment for Order `{order_id}` was rejected.\nContact support @HassanXMods1 if this is a mistake.", parse_mode="Markdown")
-            bot.send_message(chat_id, f"❌ Order `{order_id}` Cancelled.")
+            
+            # Edit Admin message to remove inline buttons
+            try:
+                bot.edit_message_caption(caption=call.message.caption + "\n\n❌ **STATUS: CANCELLED**", chat_id=chat_id, message_id=call.message.message_id, reply_markup=None)
+            except Exception:
+                try:
+                    bot.edit_message_text(text=call.message.text + "\n\n❌ **STATUS: CANCELLED**", chat_id=chat_id, message_id=call.message.message_id, reply_markup=None)
+                except Exception:
+                    pass
             del pending_orders[order_id]
 
 # --- TEXT / PHOTO HANDLER ---
@@ -262,6 +308,25 @@ def handle_inputs(message):
     if not current_state:
         return
 
+    # Admin Updating Price
+    if current_state.startswith("UPDATING_PRICE:"):
+        if not is_admin(chat_id):
+            return
+
+        _, p_key, d_code = current_state.split(":")
+        new_price_text = message.text.strip() if message.text else ""
+
+        if new_price_text.isdigit():
+            new_price = int(new_price_text)
+            PRODUCTS[p_key]["prices"][d_code] = new_price
+            user_states[chat_id] = None
+            msg = bot.send_message(chat_id, f"✅ **Price Updated Successfully!**\n\n{PRODUCTS[p_key]['name']} ({d_code}) is now **₹{new_price}**", parse_mode="Markdown", reply_markup=get_admin_panel())
+            delayed_delete(chat_id, msg.message_id, delay=15)
+        else:
+            bot.send_message(chat_id, "❌ Invalid input! Please enter numbers only (e.g. 120):")
+        return
+
+    # Admin Adding Key
     if current_state.startswith("ADDING_KEY:"):
         if not is_admin(chat_id):
             return
@@ -273,9 +338,11 @@ def handle_inputs(message):
         if key:
             stock_keys[target_stock].append(key)
             user_states[chat_id] = None
-            bot.send_message(chat_id, f"✅ **Key added to {PRODUCTS[p_key]['name']} ({d_code})!**\n\nTotal Stock Now: {len(stock_keys[target_stock])}", parse_mode="Markdown", reply_markup=get_admin_panel())
+            msg = bot.send_message(chat_id, f"✅ **Key added to {PRODUCTS[p_key]['name']} ({d_code})!**\n\nTotal Stock Now: {len(stock_keys[target_stock])}", parse_mode="Markdown", reply_markup=get_admin_panel())
+            delayed_delete(chat_id, msg.message_id, delay=15)
         return
 
+    # User Submitting Payment Proof
     if current_state.startswith("WAITING_PROOF:"):
         _, p_key, d_code = current_state.split(":")
 
@@ -286,7 +353,11 @@ def handle_inputs(message):
         pending_orders[order_id] = chat_id
         user_states[chat_id] = None
 
-        bot.send_message(chat_id, f"✅ **Payment proof received!**\n\nOrder ID:\n`{order_id}`\n\nOur team will verify and deliver your key shortly.\nUpdates: @HassanXMods1", parse_mode="Markdown")
+        user_conf = bot.send_message(chat_id, f"✅ **Payment proof received!**\n\nOrder ID:\n`{order_id}`\n\nOur team will verify and deliver your key shortly.\nUpdates: @HassanXMods1", parse_mode="Markdown")
+        
+        # User dynamic auto-deletes for proof input & confirmation
+        delayed_delete(chat_id, message.message_id, delay=10)
+        delayed_delete(chat_id, user_conf.message_id, delay=60)
 
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
@@ -307,7 +378,7 @@ def handle_inputs(message):
         if message.photo:
             bot.send_photo(PRIMARY_ADMIN_ID, message.photo[-1].file_id, caption=admin_msg, parse_mode="Markdown", reply_markup=markup)
         else:
-            bot.send_message(PRIMARY_ADMIN_ID, f"{admin_msg}\nProof/UTR: {message.text}", parse_mode="Markdown", reply_markup=markup)
+            bot.send_message(PRIMARY_ADMIN_ID, f"{admin_msg}\nProof/UTR: {message.text}", parse_mode="Markdown", reply_markdown=markup)
 
 # --- WEBHOOK SETTER ---
 if __name__ == "__main__":
@@ -317,4 +388,3 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
-                         
