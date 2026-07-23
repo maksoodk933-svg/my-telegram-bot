@@ -56,18 +56,19 @@ def safe_delete(chat_id, message_id):
     except Exception:
         pass
 
-# --- TEXT MESSAGES ---
-WELCOME_TEXT = (
-    "👋 Welcome, Hassan X\n\n"
-    "★ — 👑 Hassan X Mod Store 👑 — ★\n\n"
-    "🔑 Premium All Best Mod Keys\n"
-    "⚡ Instant Delivery 24/7\n"
-    "🔒 100% Secure Payment\n"
-    "🏷 Best Prices Guaranteed\n"
-    "🎁 High Discount Rewards\n"
-    "🎧 Active Support For Set-Up\n\n"
-    "🚀 Tap Shop Now To Start!"
-)
+# Dynamic Welcome Message Generator
+def get_welcome_text(first_name):
+    return (
+        f"👋 Welcome, {first_name}\n\n"
+        "★ — 👑 Hassan X Mod Store 👑 — ★\n\n"
+        "🔑 Premium All Best Mod Keys\n"
+        "⚡ Instant Delivery 24/7\n"
+        "🔒 100% Secure Payment\n"
+        "🏷 Best Prices Guaranteed\n"
+        "🎁 High Discount Rewards\n"
+        "🎧 Active Support For Set-Up\n\n"
+        "🚀 Tap Shop Now To Start!"
+    )
 
 # --- INLINE MENUS ---
 def get_start_inline_menu():
@@ -145,7 +146,9 @@ def webhook():
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user_states[message.chat.id] = None
-    bot.send_message(message.chat.id, WELCOME_TEXT, reply_markup=get_start_inline_menu())
+    first_name = message.from_user.first_name or "User"
+    welcome_text = get_welcome_text(first_name)
+    bot.send_message(message.chat.id, welcome_text, reply_markup=get_start_inline_menu())
 
 @bot.message_handler(commands=['admin'])
 def admin_command(message):
@@ -160,6 +163,7 @@ def callback_listener(call):
     chat_id = call.message.chat.id
     user_id = call.from_user.id
     message_id = call.message.message_id
+    first_name = call.from_user.first_name or "User"
     data = call.data.split(":")
     action = data[0]
 
@@ -174,7 +178,8 @@ def callback_listener(call):
         if sub == "open_shop":
             bot.edit_message_text("🛒 **Select Your Mod Panel:**", chat_id, message_id, parse_mode="Markdown", reply_markup=get_main_panel_inline())
         elif sub == "go_start":
-            bot.edit_message_text(WELCOME_TEXT, chat_id, message_id, reply_markup=get_start_inline_menu())
+            welcome_text = get_welcome_text(first_name)
+            bot.edit_message_text(welcome_text, chat_id, message_id, reply_markup=get_start_inline_menu())
 
     elif action == "user":
         sub = data[1]
