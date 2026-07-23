@@ -3,13 +3,13 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
-# Logging setup
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "123456789"))  # Apna Telegram User ID yahan daalein ya Render Env variables mein set karein
+# Render Variables (Dono me se koi bhi naam ho, auto pick kar lega)
+TOKEN = os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN") or "8952801794:AAGcF79L2Nftwd_IUp2YiF7aLH1wWS5X8eI"
+ADMIN_ID_VAL = os.getenv("ADMIN_ID", "123456789")
+ADMIN_ID = int(ADMIN_ID_VAL) if str(ADMIN_ID_VAL).isdigit() else 123456789
 
-# Temporary Storage (Keys & Orders)
 AVAILABLE_KEYS = {
     "1_day": ["KEY-1DAY-ABC1234", "KEY-1DAY-XYZ5678"],
     "7_days": ["KEY-7DAYS-QWE1234"],
@@ -18,24 +18,20 @@ AVAILABLE_KEYS = {
 
 PENDING_ORDERS = {}
 
-# /start Command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     keyboard = [
         [InlineKeyboardButton("🔑 Buy Mod / VIP Key", callback_data='buy_keys')],
         [InlineKeyboardButton("🛠️ Contact Admin", callback_data='contact_admin')]
     ]
-    
     if user.id == ADMIN_ID:
         keyboard.append([InlineKeyboardButton("⚙️ Admin Panel", callback_data='admin_panel')])
 
-    reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
         f"👋 Welcome {user.first_name}!\n\nSelect an option from below:",
-        reply_markup=reply_markup
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# Callback Handlers
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -53,7 +49,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data.startswith('plan_'):
         plan = query.data.replace('plan_', '')
         PENDING_ORDERS[user_id] = plan
-        
         text = (
             f"📌 **Order Selected:** {plan.replace('_', ' ').title()}\n\n"
             "💳 **Payment Instructions:**\n"
@@ -89,11 +84,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if AVAILABLE_KEYS.get(plan):
             key = AVAILABLE_KEYS[plan].pop(0)
-            await context.bot.send_message(
-                chat_id=target_user,
-                text=f"✅ **Payment Verified!**\n\nYour Key: `{key}`",
-                parse_mode="Markdown"
-            )
+            await context.bot.send_message(chat_id=target_user, text=f"✅ **Payment Verified!**\n\nYour Key: `{key}`", parse_mode="Markdown")
             await query.edit_message_text(f"✅ Approved for User `{target_user}`. Key Sent: `{key}`", parse_mode="Markdown")
         else:
             await query.edit_message_text(f"❌ Out of stock for plan `{plan}`!")
@@ -103,20 +94,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=target_user, text="❌ Your payment screenshot was rejected by Admin.")
         await query.edit_message_text(f"❌ Order Rejected for User `{target_user}`.")
 
-# Photo/Screenshot Handler
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id in PENDING_ORDERS:
         plan = PENDING_ORDERS.pop(user_id)
         photo_file_id = update.message.photo[-1].file_id
 
-        # Admin Ko Screenshot Bhejo
-        keyboard = [
-            [
-                InlineKeyboardButton("✅ Approve", callback_data=f'approve_{user_id}_{plan}'),
-                InlineKeyboardButton("❌ Reject", callback_data=f'reject_{user_id}')
-            ]
-        ]
+        keyboard = [[InlineKeyboardButton("✅ Approve", callback_data=f'approve_{user_id}_{plan}'), InlineKeyboardButton("❌ Reject", callback_data=f'reject_{user_id}')]]
         
         await context.bot.send_photo(
             chat_id=ADMIN_ID,
@@ -125,22 +109,15 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        
         await update.message.reply_text("✅ Screenshot admin ko bhej diya gaya hai. Verification ke baad key mil jayegi!")
     else:
         await update.message.reply_text("Pehle /start karke 'Buy Key' option select karein.")
 
 def main():
-    if not TOKEN:
-        print("TELEGRAM_BOT_TOKEN missing!")
-        return
-
     app = Application.builder().token(TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-
     print("Bot started successfully...")
     app.run_polling()
 
