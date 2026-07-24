@@ -1,6 +1,7 @@
 import os
 import random
 import string
+import urllib.parse
 from flask import Flask, request
 import telebot
 from telebot import types
@@ -230,7 +231,11 @@ def callback_listener(call):
             f"💳 **UPI ID**: `8171733966@fam`\nName: Harsaan Ali Khan\n\n"
             f"Please pay exact amount and send UTR / Screenshot here."
         )
-        qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=upi://pay?pa=8171733966@fam&pn=Harsaan%20Ali%20Khan&am={price}"
+        
+        # Fixed UPI Payment URI with Exact Price
+        upi_uri = f"upi://pay?pa=8171733966@fam&pn=Harsaan%20Ali%20Khan&am={price}&cu=INR"
+        encoded_upi_uri = urllib.parse.quote_plus(upi_uri)
+        qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={encoded_upi_uri}"
         
         # Safe edit/delete flow for QR
         safe_delete(chat_id, message_id)
