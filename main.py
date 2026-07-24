@@ -2,9 +2,13 @@ import os
 import random
 import string
 import urllib.parse
+import logging
 from flask import Flask, request
 import telebot
 from telebot import types
+
+# Setup Logging
+logging.basicConfig(level=logging.INFO)
 
 TOKEN = os.environ.get('BOT_TOKEN')
 ADMIN_IDS = [7172828025, 8705494010]
@@ -37,7 +41,6 @@ DAYS_MAP = {
     "30d": "30 Days"
 }
 
-# Stock keys generator
 stock_keys = {}
 def refresh_stock_structure():
     for p in PRODUCTS.keys():
@@ -51,7 +54,7 @@ pending_orders = {}
 user_orders = {}
 user_states = {}
 last_bot_messages = {}
-temp_panel_creation = {} # For step-by-step panel creation
+temp_panel_creation = {}
 
 def is_admin(user_id):
     return user_id in ADMIN_IDS
@@ -59,10 +62,9 @@ def is_admin(user_id):
 def safe_delete(chat_id, message_id):
     try:
         bot.delete_message(chat_id, message_id)
-    except Exception:
-        pass
+    except Exception as e:
+        logging.error(f"Error deleting message: {e}")
 
-# Dynamic Welcome Message Generator
 def get_welcome_text(first_name):
     return (
         f"👋 Welcome, {first_name}\n\n"
@@ -76,7 +78,6 @@ def get_welcome_text(first_name):
         "🚀 Tap Shop Now To Start!"
     )
 
-# --- INLINE MENUS ---
 def get_start_inline_menu():
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(types.InlineKeyboardButton("🛒 Shop Now", callback_data="nav:open_shop"))
@@ -134,7 +135,6 @@ def get_admin_panel():
     )
     return markup
 
-# --- WEBHOOK ROUTES ---
 @app.route('/', methods=['GET'])
 def home():
     return "Bot Webhook Server Active!"
@@ -148,22 +148,26 @@ def webhook():
         return 'OK', 200
     return 'Forbidden', 403
 
-# --- COMMANDS ---
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    user_states[message.chat.id] = None
-    first_name = message.from_user.first_name or "User"
-    welcome_text = get_welcome_text(first_name)
-    bot.send_message(message.chat.id, welcome_text, reply_markup=get_start_inline_menu())
+    try:
+        user_states[message.chat.id] = None
+        first_name = message.from_user.first_name or "User"
+        welcome_text = get_welcome_text(first_name)
+        bot.send_message(message.chat.id, welcome_text, reply_markup=get_start_inline_menu())
+    except Exception as e:
+        logging.error(f"Error in /start command: {e}")
 
 @bot.message_handler(commands=['admin'])
 def admin_command(message):
-    if is_admin(message.from_user.id):
-        bot.send_message(message.chat.id, "🛠️ **Admin Control Panel**", parse_mode="Markdown", reply_markup=get_admin_panel())
-    else:
-        bot.send_message(message.chat.id, "❌ **Access Denied!**")
+    try:
+        if is_admin(message.from_user.id):
+            bot.send_message(message.chat.id, "🛠️ **Admin Control Panel**", parse_mode="Markdown", reply_markup=get_admin_panel())
+        else:
+            bot.send_message(message.chat.id, "❌ **Access Denied!**")
+    except Exception as e:
+        logging.error(f"Error in /admin command: {e}")
 
-# --- CALLBACK HANDLER (EDIT MESSAGE SYSTEM) ---
 @bot.callback_query_handler(func=lambda call: True)
 def callback_listener(call):
     chat_id = call.message.chat.id
@@ -178,7 +182,6 @@ def callback_listener(call):
     except:
         pass
 
-    # Dynamic Editing System
     if action == "nav":
         sub = data[1]
         if sub == "open_shop":
@@ -245,12 +248,10 @@ def callback_listener(call):
             f"Please pay exact amount and send UTR / Screenshot here."
         )
         
-        # Fixed UPI Payment URI with Exact Price
         upi_uri = f"upi://pay?pa=8171733966@fam&pn=Harsaan%20Ali%20Khan&am={price}&cu=INR"
         encoded_upi_uri = urllib.parse.quote_plus(upi_uri)
         qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={encoded_upi_uri}"
         
-        # Safe edit/delete flow for QR with Cancel button
         safe_delete(chat_id, message_id)
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(
@@ -343,7 +344,6 @@ def callback_listener(call):
                 
                 bot.send_message(u_id, delivery_msg, parse_mode="Markdown", disable_web_page_preview=True)
                 
-                # Update User's "My Orders" History
                 if u_id not in user_orders:
                     user_orders[u_id] = []
                 
@@ -386,7 +386,6 @@ def callback_listener(call):
                     pass
             del pending_orders[order_id]
 
-# --- TEXT / PHOTO HANDLER ---
 @bot.message_handler(content_types=['text', 'photo'])
 def handle_inputs(message):
     chat_id = message.chat.id
@@ -395,7 +394,6 @@ def handle_inputs(message):
     if not current_state:
         return
 
-    # --- NEW PANEL CREATION FLOW ---
     if current_state == "CREATE_PANEL_NAME":
         if not is_admin(chat_id): return
         panel_name = message.text.strip()
@@ -426,7 +424,6 @@ def handle_inputs(message):
                 user_states[chat_id] = f"CREATE_PANEL_PRICE:{next_day}"
                 bot.send_message(chat_id, f"Enter Price for **{DAYS_MAP[next_day]}** plan (only numbers):", parse_mode="Markdown")
             else:
-                # Creation Complete
                 p_data = temp_panel_creation[chat_id]
                 PRODUCTS[p_data["id"]] = {
                     "name": p_data["name"],
@@ -441,7 +438,6 @@ def handle_inputs(message):
             bot.send_message(chat_id, "❌ Invalid input! Please send numbers only (e.g. 100):")
         return
 
-    # --- EXISTING ADMIN STATES ---
     if current_state.startswith("UPDATING_PRICE:"):
         if not is_admin(chat_id): return
 
@@ -467,4 +463,7 @@ def handle_inputs(message):
         if key:
             stock_keys[target_stock].append(key)
             user_states[chat_id] = None
-            bot.send_m
+            bot.send_message(chat_id, f"✅ **Key added to {PRODUCTS[p_key]['name']} ({d_code})!**\n\nTotal Stock Now: {len(stock_keys[target_stock])}", parse_mode="Markdown", reply_markup=get_admin_panel())
+        return
+
+    if
